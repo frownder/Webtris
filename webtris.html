@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Webtris</title>
+
+
+<!-- stage is composed of 10x20 blocks. Each block is (20px x 20px) -->
+
+<style type="text/css">
+	#stage     { position:relative; width:200px; height:400px; border:2px solid; background:#666; }
+	.block     { width:18px; height:18px; border:1px solid #000; float:left; }
+	.patDiv 	{ position:absolute; left:0 }
+	.pattern1   { background:aqua;       width:20px; height:20px; float:left;}
+	.pattern2   { background:yellow;     width:20px; height:20px; float:left;}
+	.pattern3   { background:blueviolet; width:20px; height:20px; float:left;}
+	.pattern4   { background:chartreuse; width:20px; height:20px; float:left;}
+	.pattern5   { background:coral;      width:20px; height:20px; float:left;}
+	.pattern6   { background:orangered;  width:20px; height:20px; float:left;}
+	.transparentBlock {border:none; width:20px; height:20px; float:left;}
+		
+</style>
+
+
+<script type="text/javascript">
+	var BLOCK_WH=20; //width & height of one block (px)
+	var curPattern=null;  //current moving Pattern.
+	var interval=null;    //timer for down
+	var endingTimer=null; //timer for 1 pattern Ending after collision with setDown()
+
+	var STAGE_ROW=10; 
+	var STAGE_COL=20;
+	
+	var score = 0;
+	var autoTimer = 500;
+	
+	/************************************* 
+	 class Pattern :   
+	   -base class of All Patterns */
+	function Pattern() {
+		this.width=3;
+		this.height=3;
+		this.rotate=0;
+
+		/////// handling function /////////////////////////////////////////////////////
+		this.div=null;  //DIV element. & controlled by CSS
+		this.top=0;
+		this.left=0;
+		this.setRight = function() { this.left++; if(this.isCollide()) this.left--;}
+		this.setLeft  = function() { this.left--; if(this.isCollide()) this.left++; }
+		this.setDown  = function() { 
+			this.top++; 
+			if(this.isCollide()){
+				this.top--;
+				console.log('down collided');
+				clearInterval(interval); //stop auto-down.
+				if (endingTimer==null)
+					endingTimer = setInterval( function(){ //end Timer to call fillBlock
+						curPattern.fillBlock(); //end a Pattern
+					}, 300);
+			}
+		}
+		this.setDrop = function(){
+			while(true) {
+				this.top++;
+				if (this.isCollide()){  //one pattern end by drop
+					this.top--;
+					clearInterval(interval);
+					this.fillBlock();
+					return;
+				}
+				this.redraw();
+			}
+		}
+
+		this.fillBlock = function(){ //end a Pattern & fill(stay) Block to stage & add new Pattern
+			//need clean timer, when called by Timer.
+			if (endingTimer!=null){
+				clearInterval(endingTimer);
+				endingTimer=null;
+			}
+			var stage=document.getElementById('stage');
+			for(var i=0; i<this.width; i++){
+				for(var j=0; j<this.height; j++){
+					var coord = this.getRotatedCoord(i,j);
+					if(this.shape[i][j] == 1){ //append a block of pattern to stage's current place
+						var patternBlock=document.createElement('div');
+						patternBlock.className= curPattern.type;
+						
+						var stageBlock=stage.children.item((this.top+coord.x)*STAGE_ROW+this.left+coord.y);
+						stage.replaceChild(patternBlock, stageBlock);//replace block with patternBlock
+					}
+				}
+			}
+			if	(this.div)
+				stage.removeChild(this.div); //current div remove
+			
+			score+=20; //block drop score
+			document.getElementById('score').innerHTML=score;
+				
+			////////////// Restart another Block //////////////////////////////////////
+			addOne( pickOnePattern() );
+		}
+		
+		
+		this.setRotate = function() { 
+			this.rotate++;
+			var count=1;
+			if (this.type=='pattern5') count=2;//collision check twice for long pattern.(long pattern can exceed by 2)
+			for(var i=0;i<count;i++) { 
+				switch( this.isCollide() ){ //after rotate, collision check and undo.
+					case 1: this.left++; break;  
+					case 2: this.left--; break;
+					case true: this.top--;  break;
+				}
+			}
+		}
+		
+		this.isCollide = function() { //Collision check: in fact, collide means overlap.
+			for(var i=0; i<this.width; i++){
+				for(var j=0; j<this.height; j++){
+					var coord = this.getRotatedCoord(i,j);
+					if (this.shape[i][j] == 1){
+						if (this.left +coord.y < 0) return 1; //1: left collide
+						if (this.left +coord.y > (STAGE_ROW-1)) return 2; //2: right collide
+						if (this.collideBlocks(coord.x,coord.y)) return true;//COLLIDE with accumulated patten block
+						if (this.top + coord.x > (STAGE_COL-1)) return true; //true: down collide
+					}
+				}
+			}
+			return false;
+		}
+		
+		//check if x,y postion collide(overlap) with accumulated patten block.. 
+		this.collideBlocks = function(x,y){
+			var stage=document.getElementById('stage');
+			var blocks=stage.children; //children returns HTMLCollection
+			
+			var index = (this.top+x)*STAGE_ROW + this.left+y; //index calulation with x,y
+			if( index > STAGE_ROW*STAGE_COL ) return false;   //max block is 200.
+			
+			if (blocks.item(index).className !='block') return true; //Collision occur!!
+			
+			return false;
+		}
+		
+		//apply left top rotate to CSS : this makes redraw effect	
+		this.redraw = function(){
+			if (this.div==null) 
+				return;
+			this.div.style.left = this.left*BLOCK_WH + 'px';  //real move
+			this.div.style.top = this.top*BLOCK_WH + 'px' ;
+			if (this.rotate !=0){
+				this.div.style.transform = 'rotate('+this.rotate*90+'deg)';		
+			}
+			this.clearLine(); //when 1 line is fully filled.
+		}
+		
+		//get roteated Coordination
+		this.getRotatedCoord = function(i,j){
+			var x,y;
+			switch(this.rotate%4){
+				case 1: x=j;  y=this.width-i-1; //90 degree
+					break;
+				case 2: x=this.height-i-1; y=this.width-j-1; //180 degree
+					break;
+				case 3: x=this.width-j-1; y=i;  //270 degree
+					break;
+				default: x=i; y=j;
+					break;
+			}
+			return {"x":x, "y":y};
+		}
+
+		//clear fully filled line & moving down whole stage
+		this.clearLine = function(){ 
+			var stage = document.getElementById('stage');
+			
+			for (var i=0; i<STAGE_COL; i++){
+				var count=0;
+				for (var j=0; j<STAGE_ROW; j++){
+					if (stage.children.item(i*STAGE_ROW+j).className=='block') //if line is not full
+						break;
+					count++;
+				}
+				if (count==STAGE_ROW){ //1 line filled
+					console.log('line full');
+					score+=100; //line fill score is 100points
+					document.getElementById('score').innerHTML=score;
+					
+					if (Math.floor(score/1000) - Math.floor((score-190)/1000) > 0){
+						console.log('timer increase');
+						autoTimer-=20;
+					}
+					
+					for (var k=STAGE_ROW-1; k>=0; k--){
+						var removed=stage.removeChild(stage.children.item(i*STAGE_ROW+k)); //delete 10 same index(like queue)
+						console.log('removed:'+ removed.className );
+					}
+					for (var k=0; k<STAGE_ROW; k++){
+						var block=document.createElement('div');
+						block.className='block';
+						stage.insertBefore( block, stage.firstChild); //add new 10 blocks on the front(bottom deleted),parent=stage
+					}		
+				}
+			}
+		}
+	}//end of Pattern class	
+
+	/* class Pattern1 : shapes like upside-down 'T' */
+	function Pattern1(){
+		this.type="pattern1";
+		this.shape=[new Array(0,1,0), new Array(1,1,1), new Array(0,0,0) ];
+	}
+	Pattern1.prototype = new Pattern();
+	Pattern1.prototype.constructor = Pattern1();
+	
+	
+	/* class Pattern2 : shapes like 'L' */
+	function Pattern2(){
+		this.type="pattern2";
+		this.shape=[new Array(1,0,0),new Array(1,1,1),new Array(0,0,0) ];
+	}
+	Pattern2.prototype = new Pattern();
+	Pattern2.prototype.constructor = Pattern2();
+	
+	
+	/* class Pattern3 : shapes like reversed 'L' */
+	function Pattern3(){
+		this.type="pattern3";
+		this.shape=[new Array(1,1,0),new Array(0,1,0),new Array(0,1,0) ];
+	}
+	Pattern3.prototype = new Pattern();
+	Pattern3.prototype.constructor = Pattern3();
+	
+	
+	/* class Pattern4 : shapes like reversed 'N' */
+	function Pattern4(){
+		this.type="pattern4";
+		this.shape=[new Array(1,0,0),new Array(1,1,0),new Array(0,1,0) ];
+	}
+	Pattern4.prototype = new Pattern();
+	Pattern4.prototype.constructor = Pattern4();
+	
+	
+	/* class (Long) Pattern5 : shapes like 'l' */
+	function Pattern5(){
+		this.type="pattern5";
+		this.width=4;
+		this.height=4;
+		this.shape=[new Array(0,1,0,0),new Array(0,1,0,0),new Array(0,1,0,0),new Array(0,1,0,0) ];
+	}
+	Pattern5.prototype = new Pattern();
+	Pattern5.prototype.constructor = Pattern5();
+	
+	
+	/* class (small) Pattern6 : shapes like 'l' */
+	function Pattern6(){
+		this.type="pattern6";
+		this.width=2;
+		this.height=2;
+		this.shape=[new Array(1,1),new Array(1,1) ];
+	}
+	Pattern6.prototype = new Pattern();
+	Pattern6.prototype.constructor = Pattern6();
+	
+	
+	
+	/* function for new Random Pattern */
+	function pickOnePattern(){
+		var i = (Math.floor(Math.random()*100) %6 +1); //1~6
+		return new window['Pattern'+ i]();  //equals: new Pattern1() ~ new Pattern6() 
+	}
+	
+	
+	function addOne(pattern){
+		
+		var w=pattern.width;
+		var h=pattern.height;
+
+		//pattern.div : rectangle Area which includes one Pattern
+		var patDiv = document.createElement('div');
+		patDiv.className="patDiv";
+		patDiv.style.width = w*BLOCK_WH + 'px';  //set style.width for CSS
+		patDiv.style.height = h*BLOCK_WH + 'px';
+		patDiv.style.left = pattern.left*BLOCK_WH;
+
+		//saving & matching pattern & div 
+		curPattern=pattern; //global handle for current moving-Pattern.
+		pattern.div=patDiv;  //pattern & Div matching
+		
+		for(var i=0; i < w; i++){
+			for(var j=0; j < h; j++){
+				if (pattern.shape[i][j]){ //when 1: need draw Block
+					var block=document.createElement('div');
+					block.className= pattern.type;
+					patDiv.appendChild(block);
+				}else{ //blank Block
+					var block=document.createElement('div');
+					block.className="transparentBlock";
+					patDiv.appendChild(block);
+				}
+			}
+		}
+		document.getElementById('stage').appendChild(patDiv);
+
+		if (pattern.top==0 && pattern.isCollide()) { //Game Over check
+			clearInterval(interval);
+			var ret = confirm('Game Over! Do you want play one more game?');
+			if (ret == true)
+				window.location.reload();
+			else
+				return;
+		}
+		
+		//timer for auto-down
+		interval = setInterval( function(){
+			curPattern.setDown();
+			curPattern.redraw();
+		}, autoTimer );
+	}
+	
+	function keyListener(e){
+		switch (e.keyCode){
+			case 37:curPattern.setLeft();
+				 	 curPattern.redraw();
+				 break; 
+			case 38:curPattern.setRotate();
+				 	 curPattern.redraw();
+				 break; 
+			case 39:curPattern.setRight();
+				 	 curPattern.redraw();
+				 break; 
+			case 40:curPattern.setDown();
+					 curPattern.redraw();
+				 break; 
+			case 32:curPattern.setDrop(); //fast drop by spaceBar
+				 break; 
+		}
+	}
+
+	window.onload=function(){
+		for(var i=0; i<10; i++){ //stage init
+			for(var j=0; j<20; j++){
+				var block=document.createElement('div');
+				block.className = 'block';
+				document.getElementById('stage').appendChild(block);		
+			}
+		}
+
+		addOne( pickOnePattern() );
+	 
+		document.onkeydown=keyListener;		
+	}
+
+	
+	
+</script>
+
+
+</head>
+
+
+<body>
+	<table>
+		<tr>
+			<td>
+				<div id="stage">
+				</div>
+			</td>
+			<td>
+				<table>
+					<tr> 
+						<td>Score : </td>   
+						<td> <div id="score">0</div> </td>
+					</tr>
+					<tr><td>
+						Use Key<br/>
+						&nbsp;&nbsp;&nbsp;&nbsp; up-arrow : Rotate<br/>
+					  	&nbsp;&nbsp;&nbsp;&nbsp; spaceBar : Drop <br/><br/>
+					</td></tr>
+			  	</table>
+			</td>
+		</tr>
+	</table>
+</body>
+
+
+</html>
